@@ -7,17 +7,17 @@ CRM local para clientes, produtos, oportunidades, atividades e propostas. O fron
 Requisitos: Node.js 24 ou superior e npm.
 
 ```bash
-npm install
-npm run dev
+npm.cmd install
+npm.cmd run dev
 ```
 
 Abra o endereço informado pelo Vite (normalmente `http://127.0.0.1:5173`). O comando inicia o front e a API juntos.
 
-Para adicionar 10 produtos fictícios ao catálogo, execute `npm run seed:products`. A carga pode ser repetida sem duplicar os produtos de demonstração.
+Para adicionar 10 produtos fictícios ao catálogo, execute `npm.cmd run seed:products`. A carga pode ser repetida sem duplicar os produtos de demonstração.
 
 Em **Produtos**, marque vários produtos ativos e clique em **Criar proposta**. O assistente permite ajustar itens, quantidades e preços, escolher cliente e oportunidade, definir validade, entrega, pagamento e desconto, revisar o total e salvar ou salvar com download do PDF. Se nenhuma oportunidade for escolhida, uma nova é criada no funil.
 
-Para adicionar 50 clientes fictícios, execute `npm run seed:clients`. A carga usa e-mails `@exemplo.test` e também pode ser repetida sem duplicar os clientes de demonstração.
+Para adicionar 50 clientes fictícios, execute `npm.cmd run seed:clients`. A carga usa e-mails `@exemplo.test` e também pode ser repetida sem duplicar os clientes de demonstração.
 
 Depois de salvar uma proposta, use **Visualizar** para abrir o PDF na própria tela ou **Baixar PDF** para salvá-lo. A edição também oferece a visualização e o download do PDF salvo. O documento A4 inclui cliente, validade, itens, desconto, total e observações, com paginação automática.
 Veja um [PDF de exemplo](examples/proposta-exemplo.pdf) com dados fictícios.
