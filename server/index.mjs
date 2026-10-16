@@ -34,7 +34,7 @@ db.exec(`
     id INTEGER PRIMARY KEY, title TEXT NOT NULL, client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
     opportunity_id INTEGER REFERENCES opportunities(id) ON DELETE SET NULL,
     status TEXT NOT NULL DEFAULT 'rascunho' CHECK(status IN ('rascunho','enviada','aceita','recusada')),
-    valid_until TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+    valid_until TEXT NOT NULL DEFAULT '', delivery_date TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
     discount_percent REAL NOT NULL DEFAULT 0 CHECK(discount_percent >= 0 AND discount_percent <= 100),
     subtotal_cents INTEGER NOT NULL DEFAULT 0, total_cents INTEGER NOT NULL DEFAULT 0,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -58,6 +58,9 @@ db.exec(`
     type TEXT NOT NULL CHECK(type IN ('ligacao','email','reuniao','mensagem','outro')),
     description TEXT NOT NULL,
     occurred_at TEXT NOT NULL,
+    scheduled_at TEXT NOT NULL DEFAULT '',
+    completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1)),
+    funnel_stage TEXT NOT NULL DEFAULT '' CHECK(funnel_stage = '' OR funnel_stage IN ('novo','contato','proposta','negociacao','ganho','perdido')),
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE INDEX IF NOT EXISTS idx_opportunities_client ON opportunities(client_id);
@@ -69,9 +72,17 @@ db.exec(`
     key TEXT PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
 `)
+const interactionColumns = new Set(db.prepare('PRAGMA table_info(client_interactions)').all().map(column => column.name))
+if (!interactionColumns.has('scheduled_at')) db.exec("ALTER TABLE client_interactions ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT ''")
+if (!interactionColumns.has('completed')) db.exec('ALTER TABLE client_interactions ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1))')
+if (!interactionColumns.has('funnel_stage')) db.exec("ALTER TABLE client_interactions ADD COLUMN funnel_stage TEXT NOT NULL DEFAULT '' CHECK(funnel_stage = '' OR funnel_stage IN ('novo','contato','proposta','negociacao','ganho','perdido'))")
+const proposalColumns = new Set(db.prepare('PRAGMA table_info(proposals)').all().map(column => column.name))
+if (!proposalColumns.has('delivery_date')) db.exec("ALTER TABLE proposals ADD COLUMN delivery_date TEXT NOT NULL DEFAULT ''")
 
 const stages = new Set(['novo', 'contato', 'proposta', 'negociacao', 'ganho', 'perdido'])
 const statuses = new Set(['rascunho', 'enviada', 'aceita', 'recusada'])
+const interactionTypes = new Set(['ligacao', 'email', 'reuniao', 'mensagem', 'outro'])
+const contactInteractionTypes = new Set(['ligacao', 'email', 'reuniao', 'mensagem'])
 const query = (sql, ...args) => db.prepare(sql).all(...args)
 const one = (sql, ...args) => db.prepare(sql).get(...args)
 const run = (sql, ...args) => db.prepare(sql).run(...args)
@@ -95,6 +106,15 @@ const date = (value) => {
   const result = str(value, 10)
   if (result && !/^\d{4}-\d{2}-\d{2}$/.test(result)) throw new ApiError(400, 'Data inválida.')
   return result
+}
+const legacyDeliveryPattern = /^Prazo de entrega:[ \t]*(\d{2})\/(\d{2})\/(\d{4})(?:\r?\n|$)/
+for (const proposal of query("SELECT id, notes FROM proposals WHERE delivery_date = '' AND notes LIKE 'Prazo de entrega:%'")) {
+  const match = legacyDeliveryPattern.exec(proposal.notes)
+  if (!match) continue
+  const [, day, month, year] = match
+  const parsed = new Date(Date.UTC(Number(year), Number(month) - 1, Number(day)))
+  if (parsed.getUTCFullYear() !== Number(year) || parsed.getUTCMonth() + 1 !== Number(month) || parsed.getUTCDate() !== Number(day)) continue
+  run('UPDATE proposals SET delivery_date=? WHERE id=?', `${year}-${month}-${day}`, proposal.id)
 }
 const optionalId = (value) => value === null || value === undefined || value === '' ? null : id(value)
 const exists = (table, value) => {
@@ -124,22 +144,54 @@ function clients() {
 }
 function clientInteractions(clientId) {
   exists('clients', clientId)
-  return query(`SELECT id, client_id AS clientId, type, description,
-    occurred_at AS occurredAt, created_at AS createdAt FROM client_interactions
-    WHERE client_id = ? ORDER BY occurred_at DESC, id DESC`, clientId)
+  return query(`SELECT i.id, i.client_id AS clientId, i.type, i.description,
+    i.occurred_at AS occurredAt, i.scheduled_at AS scheduledAt, i.completed,
+    i.funnel_stage AS funnelStage, i.created_at AS createdAt FROM client_interactions i
+    WHERE i.client_id = ? ORDER BY i.occurred_at DESC, i.id DESC`, clientId)
+}
+function allClientInteractions() {
+  return query(`SELECT i.id, i.client_id AS clientId, c.name AS clientName, i.type,
+    i.description, i.occurred_at AS occurredAt, i.scheduled_at AS scheduledAt,
+    i.completed, i.funnel_stage AS funnelStage, i.created_at AS createdAt
+    FROM client_interactions i JOIN clients c ON c.id = i.client_id
+    ORDER BY i.occurred_at DESC, i.id DESC`)
+}
+function dateTime(value, label, optional = false) {
+  const result = str(value, 16)
+  if (optional && !result) return ''
+  const parsed = new Date(result)
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(result) || Number.isNaN(parsed.getTime()) ||
+      `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}T${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}` !== result) {
+    throw new ApiError(400, `${label} inválida.`)
+  }
+  return result
 }
 function saveClientInteraction(clientId, payload) {
-  exists('clients', clientId)
+  const client = one('SELECT name FROM clients WHERE id = ?', clientId)
+  if (!client) throw new ApiError(400, 'Cliente não encontrado.')
   const type = str(payload.type, 20)
-  if (!new Set(['ligacao', 'email', 'reuniao', 'mensagem', 'outro']).has(type)) throw new ApiError(400, 'Tipo de interação inválido.')
+  if (!interactionTypes.has(type)) throw new ApiError(400, 'Tipo de interação inválido.')
   const description = required(payload.description, 'Descrição')
-  const occurredAt = str(payload.occurredAt, 16)
-  const parsed = new Date(occurredAt)
-  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(occurredAt) || Number.isNaN(parsed.getTime()) ||
-      `${parsed.getFullYear()}-${String(parsed.getMonth() + 1).padStart(2, '0')}-${String(parsed.getDate()).padStart(2, '0')}T${String(parsed.getHours()).padStart(2, '0')}:${String(parsed.getMinutes()).padStart(2, '0')}` !== occurredAt) {
-    throw new ApiError(400, 'Data e hora da interação inválidas.')
-  }
-  return Number(run('INSERT INTO client_interactions (client_id, type, description, occurred_at) VALUES (?,?,?,?)', clientId, type, description, occurredAt).lastInsertRowid)
+  const occurredAt = dateTime(payload.occurredAt, 'Data e hora da interação')
+  const scheduledAt = dateTime(payload.scheduledAt, 'Data programada', true)
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    let opportunity = null
+    const active = query("SELECT id, stage FROM opportunities WHERE client_id = ? AND stage NOT IN ('ganho','perdido')", clientId)
+    if (active.length === 1) opportunity = active[0]
+    else if (active.length === 0 && contactInteractionTypes.has(type) &&
+      !one('SELECT id FROM opportunities WHERE client_id = ? LIMIT 1', clientId)) {
+      const title = str(`Contato com ${client.name}`, 200)
+      const opportunityId = Number(run('INSERT INTO opportunities (title, client_id, value_cents, stage) VALUES (?,?,0,?)', title, clientId, 'contato').lastInsertRowid)
+      opportunity = { id: opportunityId, stage: 'contato' }
+    }
+    const interactionId = Number(run(`INSERT INTO client_interactions
+      (client_id, type, description, occurred_at, scheduled_at, funnel_stage)
+      VALUES (?,?,?,?,?,?)`, clientId, type, description, occurredAt, scheduledAt,
+      opportunity?.stage ?? '').lastInsertRowid)
+    db.exec('COMMIT')
+    return interactionId
+  } catch (error) { db.exec('ROLLBACK'); throw error }
 }
 function products() {
   return query('SELECT id, name, sku, description, price_cents AS priceCents, active, created_at AS createdAt FROM products ORDER BY updated_at DESC, id DESC')
@@ -158,7 +210,8 @@ function opportunities() {
 }
 function proposals() {
   const rows = query(`SELECT p.id, p.title, p.client_id AS clientId, c.name AS clientName,
-    p.opportunity_id AS opportunityId, p.status, p.valid_until AS validUntil, p.notes,
+    p.opportunity_id AS opportunityId, p.status, p.valid_until AS validUntil,
+    p.delivery_date AS deliveryDate, p.notes,
     p.discount_percent AS discountPercent, p.subtotal_cents AS subtotalCents,
     p.total_cents AS totalCents, p.created_at AS createdAt
     FROM proposals p JOIN clients c ON c.id = p.client_id ORDER BY p.updated_at DESC, p.id DESC`)
@@ -249,28 +302,33 @@ function saveProposal(payload, currentId) {
   const totalCents = Math.round(subtotalCents * (1 - discountPercent / 100))
   const title = required(payload.title, 'Título')
   const validUntil = date(payload.validUntil)
-  const notes = str(payload.notes, 2000)
+  const existingProposal = currentId ? one('SELECT delivery_date AS deliveryDate FROM proposals WHERE id = ?', currentId) : null
+  if (currentId && !existingProposal) throw new ApiError(404, 'Proposta não encontrada.')
+  const deliveryDate = date(payload.deliveryDate === undefined ? existingProposal?.deliveryDate : payload.deliveryDate)
+  const expectedClose = payload.expectedClose === undefined ? undefined : date(payload.expectedClose)
+  const notes = (payload.deliveryDate === undefined ? str(payload.notes, 2000) : str(payload.notes, 2000).replace(legacyDeliveryPattern, '').trim())
   db.exec('BEGIN IMMEDIATE')
   try {
     if (!opportunityId) {
       opportunityId = Number(run(`INSERT INTO opportunities
         (title, client_id, value_cents, stage, expected_close)
-        VALUES (?,?,?,?,?)`, title, clientId, totalCents, 'proposta', validUntil).lastInsertRowid)
+        VALUES (?,?,?,?,?)`, title, clientId, totalCents, 'proposta', expectedClose ?? validUntil).lastInsertRowid)
     }
-    const values = [title, clientId, opportunityId, status, validUntil, notes, discountPercent, subtotalCents, totalCents]
+    const values = [title, clientId, opportunityId, status, validUntil, deliveryDate, notes, discountPercent, subtotalCents, totalCents]
     let proposalId = currentId
     if (currentId) {
-      if (!one('SELECT id FROM proposals WHERE id = ?', currentId)) throw new ApiError(404, 'Proposta não encontrada.')
-      run(`UPDATE proposals SET title=?, client_id=?, opportunity_id=?, status=?, valid_until=?, notes=?, discount_percent=?, subtotal_cents=?, total_cents=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, ...values, currentId)
+      run(`UPDATE proposals SET title=?, client_id=?, opportunity_id=?, status=?, valid_until=?, delivery_date=?, notes=?, discount_percent=?, subtotal_cents=?, total_cents=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, ...values, currentId)
       run('DELETE FROM proposal_items WHERE proposal_id = ?', currentId)
     } else {
-      proposalId = Number(run(`INSERT INTO proposals (title, client_id, opportunity_id, status, valid_until, notes, discount_percent, subtotal_cents, total_cents) VALUES (?,?,?,?,?,?,?,?,?)`, ...values).lastInsertRowid)
+      proposalId = Number(run(`INSERT INTO proposals (title, client_id, opportunity_id, status, valid_until, delivery_date, notes, discount_percent, subtotal_cents, total_cents) VALUES (?,?,?,?,?,?,?,?,?,?)`, ...values).lastInsertRowid)
     }
     for (const item of items) run('INSERT INTO proposal_items (proposal_id, product_id, description, quantity, unit_price_cents) VALUES (?,?,?,?,?)', proposalId, item.productId, item.description, item.quantity, item.unitPriceCents)
-    const opportunity = one('SELECT stage FROM opportunities WHERE id = ?', opportunityId)
-    if (!['ganho', 'perdido'].includes(opportunity.stage)) {
-      const stage = ['novo', 'contato'].includes(opportunity.stage) ? 'proposta' : opportunity.stage
-      run(`UPDATE opportunities SET stage=?, value_cents=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, stage, totalCents, opportunityId)
+    const opportunity = one('SELECT stage, expected_close AS expectedClose FROM opportunities WHERE id = ?', opportunityId)
+    if (payload.moveToProposalStage === true || !['ganho', 'perdido'].includes(opportunity.stage)) {
+      const stage = payload.moveToProposalStage === true || ['novo', 'contato'].includes(opportunity.stage) ? 'proposta' : opportunity.stage
+      run(`UPDATE opportunities SET stage=?, value_cents=?, expected_close=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, stage, totalCents, expectedClose ?? opportunity.expectedClose, opportunityId)
+    } else if (expectedClose !== undefined) {
+      run('UPDATE opportunities SET expected_close=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', expectedClose, opportunityId)
     }
     db.exec('COMMIT')
     return proposalId
@@ -317,6 +375,7 @@ async function api(req, res, pathname) {
   if (method === 'GET' && pathname === '/api/clients') return json(res, 200, clients())
   if (method === 'GET' && pathname === '/api/products') return json(res, 200, products())
   if (method === 'GET' && pathname === '/api/activities') return json(res, 200, activities())
+  if (method === 'GET' && pathname === '/api/client-interactions') return json(res, 200, allClientInteractions())
   if (method === 'GET' && pathname === '/api/opportunities') return json(res, 200, opportunities())
   if (method === 'GET' && pathname === '/api/proposals') return json(res, 200, proposals())
   const interactionsMatch = pathname.match(/^\/api\/clients\/(\d+)\/interactions$/)
@@ -326,11 +385,20 @@ async function api(req, res, pathname) {
     if (method === 'POST') return json(res, 201, { id: saveClientInteraction(clientId, await body(req)) })
     throw new ApiError(405, 'Método não permitido.')
   }
+  const interactionMatch = pathname.match(/^\/api\/client-interactions\/(\d+)$/)
+  if (method === 'PATCH' && interactionMatch) {
+    const interactionId = id(interactionMatch[1])
+    const payload = await body(req)
+    if (typeof payload.completed !== 'boolean') throw new ApiError(400, 'Informe se a interação foi concluída.')
+    const result = run('UPDATE client_interactions SET completed = ? WHERE id = ? AND scheduled_at <> ?', payload.completed ? 1 : 0, interactionId, '')
+    if (!result.changes) throw new ApiError(404, 'Interação programada não encontrada.')
+    return json(res, 200, { ok: true })
+  }
   const pdfMatch = pathname.match(/^\/api\/proposals\/(\d+)\/pdf$/)
   if (method === 'GET' && pdfMatch) {
     const proposalId = id(pdfMatch[1])
     const proposal = one(`SELECT id, title, client_id AS clientId, status, valid_until AS validUntil,
-      notes, discount_percent AS discountPercent, subtotal_cents AS subtotalCents,
+      delivery_date AS deliveryDate, notes, discount_percent AS discountPercent, subtotal_cents AS subtotalCents,
       total_cents AS totalCents FROM proposals WHERE id = ?`, proposalId)
     if (!proposal) throw new ApiError(404, 'Proposta não encontrada.')
     proposal.items = query(`SELECT description, quantity, unit_price_cents AS unitPriceCents

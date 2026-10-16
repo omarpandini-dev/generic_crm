@@ -124,9 +124,11 @@ function totals(doc, proposal, y) {
   sectionHeading(doc, '02', 'Resumo da proposta', y)
   const top = y + 39
   let remainingNotes = []
-  if (proposal.notes?.trim()) {
+  const proposalNotes = proposal.deliveryDate ? proposal.notes?.replace(/^Prazo de entrega:[ \t]*\d{2}\/\d{2}\/\d{4}(?:\r?\n|$)/, '').trim() : proposal.notes?.trim()
+  const conditionText = [proposal.deliveryDate ? `Entrega prevista: ${displayDate(proposal.deliveryDate)}` : '', proposalNotes].filter(Boolean).join('\n')
+  if (conditionText) {
     text(doc, 'CONDIÇÕES E OBSERVAÇÕES', LEFT, top + 5, { font: 'bold', size: 8, fill: color.violet, characterSpacing: 0.7 })
-    const lines = wrapLines(doc, proposal.notes, 253, 8.5)
+    const lines = wrapLines(doc, conditionText, 253, 8.5)
     for (const [index, line] of lines.slice(0, 5).entries()) {
       text(doc, line, LEFT, top + 23 + index * 14, { size: 8.5, fill: color.muted, width: 253 })
     }
