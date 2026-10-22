@@ -1,15 +1,4 @@
-import { DatabaseSync } from 'node:sqlite'
-import { existsSync } from 'node:fs'
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
-const dbPath = path.resolve(process.env.CRM_DB_PATH || path.join(root, 'data', 'crm.sqlite'))
-
-if (!existsSync(dbPath)) {
-  console.error('Banco não encontrado. Inicie o CRM uma vez com npm run dev e repita a carga.')
-  process.exit(1)
-}
+import { initialize, one, run, transaction, close } from '../server/db.mjs'
 
 const products = [
   ['DEMO-001', 'Notebook corporativo', 'Notebook para trabalho, com 16 GB de memória e SSD de 512 GB.', 389900],
@@ -24,28 +13,17 @@ const products = [
   ['DEMO-010', 'Suporte técnico mensal', 'Pacote mensal de suporte remoto para até cinco usuários.', 49000],
 ]
 
-const db = new DatabaseSync(dbPath)
 try {
-  db.exec('PRAGMA busy_timeout = 5000')
-  const table = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'products'").get()
-  if (!table) throw new Error('Tabela de produtos não encontrada. Inicie o CRM uma vez com npm run dev.')
-
-  const existing = db.prepare('SELECT id FROM products WHERE sku = ? LIMIT 1')
-  const insert = db.prepare('INSERT INTO products (sku, name, description, price_cents, active) VALUES (?, ?, ?, ?, 1)')
+  await initialize()
   let added = 0
-  db.exec('BEGIN IMMEDIATE')
-  try {
+  await transaction(async () => {
     for (const product of products) {
-      if (existing.get(product[0])) continue
-      insert.run(...product)
+      if (await one('SELECT id FROM products WHERE sku = ? LIMIT 1', product[0])) continue
+      await run('INSERT INTO products (sku, name, description, price_cents, active) VALUES (?, ?, ?, ?, 1)', ...product)
       added++
     }
-    db.exec('COMMIT')
-  } catch (error) {
-    db.exec('ROLLBACK')
-    throw error
-  }
+  })
   console.log(`${added} produto(s) fictício(s) adicionado(s); ${products.length - added} já existia(m).`)
 } finally {
-  db.close()
+  await close()
 }

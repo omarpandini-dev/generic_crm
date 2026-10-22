@@ -11,12 +11,14 @@
     "start": "node server/index.mjs",
     "preview": "vite preview",
     "seed:products": "node scripts/seed-products.mjs",
-    "seed:clients": "node scripts/seed-clients.mjs"
+    "seed:clients": "node scripts/seed-clients.mjs",
+    "migrate:sqlite": "node scripts/migrate-sqlite.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/manrope": "^0.4.2",
     "lucide-react": "^0.468.0",
     "pdfkit": "^0.20.2",
+    "pg": "^8.23.1",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
