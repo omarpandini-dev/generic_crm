@@ -51,6 +51,15 @@ Este procedimento usa dois serviços no mesmo projeto do Easypanel: um **Postgre
 6. Em **Domains** do App, configure o domínio ou subdomínio, habilite HTTPS e defina o protocolo interno como HTTP e a **Target Port** como `3001`. O Dockerfile já configura `HOST=0.0.0.0` e `PORT=3001` dentro do contêiner.
 7. Em **Security**, configure **HTTP Basic Auth** antes de abrir o domínio para usuários: esta versão do CRM não possui contas nem autenticação própria. Depois clique em **Deploy** e confira os logs. A API cria as tabelas no primeiro início; `https://SEU_DOMINIO/api/health` deve responder `{"ok":true}` após a autenticação.
 
+Para cadastrar os dados de demonstração na VPS, abra **Shell** no serviço **App** do Easypanel e execute, em `/app`:
+
+```sh
+npm run seed:clients
+npm run seed:products
+```
+
+Esses comandos usam a `DATABASE_URL` configurada no App e podem ser repetidos sem duplicar os registros de demonstração. Após alterar o código no GitHub, faça um novo **Deploy** do App antes de executar os comandos no contêiner.
+
 O banco local em `data/crm.sqlite` e o volume do Docker Desktop não são enviados pelo GitHub. A instalação acima começa com um PostgreSQL vazio. Configure backups do serviço Postgres no Easypanel depois de validar o deploy.
 
 Referências: [template Easypanel na Hostinger](https://www.hostinger.com/support/8703798-how-to-use-the-easypanel-vps-template-at-hostinger/), [serviço App](https://easypanel.io/docs/services/app), [serviço Postgres](https://easypanel.io/docs/services/postgres).
