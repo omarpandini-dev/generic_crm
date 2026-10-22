@@ -3,7 +3,7 @@ import { ArrowLeft, ArrowRight, Check, Download, FileText, Search, X } from 'luc
 import ClientCombobox, { type ClientOption } from './ClientCombobox'
 
 type Product = { id: number; name: string; priceCents: number }
-type Opportunity = { id: number; title: string; clientId: number; stage: string; expectedClose?: string }
+type Opportunity = { id: number; title: string; clientId: number; stage: string }
 type Item = { productId: number; description: string; quantity: string; unitPrice: string }
 
 export type WizardProposal = {
@@ -13,7 +13,6 @@ export type WizardProposal = {
   status: 'rascunho' | 'enviada'
   validUntil: string
   deliveryDate: string
-  expectedClose: string
   notes: string
   discountPercent: number
   moveToProposalStage?: boolean
@@ -38,12 +37,11 @@ export default function ProposalWizard({ products, clients, opportunities, sourc
   const [opportunityId, setOpportunityId] = useState(sourceOpportunity ? String(sourceOpportunity.id) : '')
   const [productSearch, setProductSearch] = useState('')
   const [title, setTitle] = useState('Proposta comercial')
-  const [validUntil, setValidUntil] = useState(() => {
+  const [validUntil] = useState(() => {
     const date = new Date()
-    date.setDate(date.getDate() + 30)
+    date.setDate(date.getDate() + 10)
     return dateISO(date)
   })
-  const [expectedClose, setExpectedClose] = useState(sourceOpportunity?.expectedClose || '')
   const [status, setStatus] = useState<'rascunho' | 'enviada'>('rascunho')
   const [discount, setDiscount] = useState('0')
   const [deliveryDate, setDeliveryDate] = useState('')
@@ -81,7 +79,7 @@ export default function ProposalWizard({ products, clients, opportunities, sourc
     if (currentStep === 2) {
       if (!title.trim()) return 'Informe o título da proposta.'
       if (!validUntil) return 'Informe a validade da proposta.'
-      if (!expectedClose) return 'Informe a previsão de fechamento para o resumo mensal do funil.'
+      if (!deliveryDate) return 'Informe a previsão de entrega para o resumo mensal e a agenda.'
       if (!Number.isFinite(discountNumber) || discountNumber < 0 || discountNumber > 100) return 'O desconto deve estar entre 0% e 100%.'
     }
     return ''
@@ -103,7 +101,7 @@ export default function ProposalWizard({ products, clients, opportunities, sourc
       await onCreate({
         title: title.trim(), clientId: Number(clientId), opportunityId: opportunityId ? Number(opportunityId) : null,
         moveToProposalStage: !!sourceOpportunity,
-        status, validUntil, deliveryDate, expectedClose,
+        status, validUntil, deliveryDate,
         notes: [paymentTerms.trim() ? `Condições de pagamento: ${paymentTerms.trim()}` : '', notes.trim()].filter(Boolean).join('\n'), discountPercent: discountNumber,
         items: items.map(item => ({ productId: item.productId, description: item.description.trim(), quantity: Number(item.quantity), unitPriceCents: Math.round(Number(item.unitPrice) * 100) })),
       }, downloadPdf)
@@ -136,16 +134,16 @@ export default function ProposalWizard({ products, clients, opportunities, sourc
           </>}
         </>}
         {step === 2 && <>
-          <div className="wizard-intro"><h3>Condições comerciais</h3><p>Defina a previsão que alimenta o resumo mensal e o prazo de entrega da proposta.</p></div>
+          <div className="wizard-intro"><h3>Condições comerciais</h3><p>Defina a previsão de entrega usada no resumo do mês e na agenda.</p></div>
           <label className="field"><span>Título *</span><input value={title} onChange={event => setTitle(event.target.value)} placeholder="Título da proposta" /></label>
-          <div className="field-row"><label className="field"><span>Validade da proposta *</span><input type="date" value={validUntil} onChange={event => setValidUntil(event.target.value)} /></label><label className="field"><span>Previsão de fechamento *</span><input type="date" value={expectedClose} onChange={event => setExpectedClose(event.target.value)} /><small className="wizard-date-hint">Usada no resumo do mês e na agenda.</small></label></div>
-          <div className="field-row"><label className="field"><span>Previsão de entrega</span><input type="date" value={deliveryDate} onChange={event => setDeliveryDate(event.target.value)} /></label><label className="field"><span>Desconto (%)</span><input type="number" min="0" max="100" step="0.01" value={discount} onChange={event => setDiscount(event.target.value)} /></label></div>
+          <div className="field-row"><label className="field"><span>Validade da proposta (10 dias)</span><input type="date" value={validUntil} readOnly /></label><label className="field"><span>Previsão de entrega *</span><input type="date" value={deliveryDate} onChange={event => setDeliveryDate(event.target.value)} /><small className="wizard-date-hint">Usada no resumo do mês e na agenda.</small></label></div>
+          <label className="field"><span>Desconto (%)</span><input type="number" min="0" max="100" step="0.01" value={discount} onChange={event => setDiscount(event.target.value)} /></label>
           <label className="field"><span>Status</span><select value={status} onChange={event => setStatus(event.target.value as 'rascunho' | 'enviada')}><option value="rascunho">Rascunho</option><option value="enviada">Enviada</option></select></label>
           <label className="field"><span>Condições de pagamento</span><input value={paymentTerms} onChange={event => setPaymentTerms(event.target.value)} placeholder="Ex.: 50% na aprovação e 50% na entrega" /></label>
           <label className="field"><span>Observações</span><textarea rows={3} value={notes} onChange={event => setNotes(event.target.value)} placeholder="Outras condições comerciais" /></label>
           <div className="wizard-total"><span>Total da proposta</span><strong>{money(total)}</strong></div>
         </>}
-        {step === 3 && <><div className="wizard-intro"><h3>Revise a proposta</h3><p>Confira os dados antes de salvar.</p></div><div className="wizard-review"><div><span>Cliente</span><strong>{client?.name}</strong></div><div><span>Oportunidade</span><strong>{sourceOpportunity?.title || relatedOpportunities.find(item => item.id === Number(opportunityId))?.title || 'Nova oportunidade no funil'}</strong></div><div><span>Proposta</span><strong>{title}</strong></div><div><span>Validade</span><strong>{new Date(`${validUntil}T12:00:00`).toLocaleDateString('pt-BR')}</strong></div><div><span>Fechamento previsto</span><strong>{new Date(`${expectedClose}T12:00:00`).toLocaleDateString('pt-BR')}</strong></div><div><span>Entrega prevista</span><strong>{deliveryDate ? new Date(`${deliveryDate}T12:00:00`).toLocaleDateString('pt-BR') : 'A combinar'}</strong></div><div><span>Status</span><strong>{status === 'enviada' ? 'Enviada' : 'Rascunho'}</strong></div></div><div className="wizard-review-items">{items.map(item => <div key={item.productId}><span>{item.quantity} × {item.description}</span><strong>{money(Number(item.quantity) * Math.round(Number(item.unitPrice) * 100))}</strong></div>)}</div><div className="wizard-review-totals"><div><span>Subtotal</span><strong>{money(subtotal)}</strong></div><div><span>Desconto</span><strong>{discountNumber}%</strong></div><div className="grand-total"><span>Total</span><strong>{money(total)}</strong></div></div>{paymentTerms && <p className="wizard-review-notes">Pagamento: {paymentTerms}</p>}{notes && <p className="wizard-review-notes">{notes}</p>}</>}
+        {step === 3 && <><div className="wizard-intro"><h3>Revise a proposta</h3><p>Confira os dados antes de salvar.</p></div><div className="wizard-review"><div><span>Cliente</span><strong>{client?.name}</strong></div><div><span>Oportunidade</span><strong>{sourceOpportunity?.title || relatedOpportunities.find(item => item.id === Number(opportunityId))?.title || 'Nova oportunidade no funil'}</strong></div><div><span>Proposta</span><strong>{title}</strong></div><div><span>Validade</span><strong>{new Date(`${validUntil}T12:00:00`).toLocaleDateString('pt-BR')}</strong></div><div><span>Entrega prevista</span><strong>{new Date(`${deliveryDate}T12:00:00`).toLocaleDateString('pt-BR')}</strong></div><div><span>Status</span><strong>{status === 'enviada' ? 'Enviada' : 'Rascunho'}</strong></div></div><div className="wizard-review-items">{items.map(item => <div key={item.productId}><span>{item.quantity} × {item.description}</span><strong>{money(Number(item.quantity) * Math.round(Number(item.unitPrice) * 100))}</strong></div>)}</div><div className="wizard-review-totals"><div><span>Subtotal</span><strong>{money(subtotal)}</strong></div><div><span>Desconto</span><strong>{discountNumber}%</strong></div><div className="grand-total"><span>Total</span><strong>{money(total)}</strong></div></div>{paymentTerms && <p className="wizard-review-notes">Pagamento: {paymentTerms}</p>}{notes && <p className="wizard-review-notes">{notes}</p>}</>}
       </div>
       <div className="wizard-footer"><button type="button" className="secondary-button" onClick={() => step ? (setStep(current => current - 1), setError('')) : onClose()} disabled={saving}><ArrowLeft size={16} /> {step ? 'Voltar' : 'Cancelar'}</button><span>Etapa {step + 1} de 4</span>{step < 3 ? <button type="button" className="primary-button" onClick={next} disabled={step === 1 && !clients.length}>Próximo <ArrowRight size={16} /></button> : <div className="wizard-final-actions"><button type="button" className="secondary-button wizard-save-button" onClick={() => void create(false)} disabled={saving}><FileText size={16} /> Salvar proposta</button><button type="button" className="primary-button" onClick={() => void create(true)} disabled={saving}><Download size={16} /> {saving ? 'Salvando...' : 'Salvar e baixar PDF'}</button></div>}</div>
     </div>

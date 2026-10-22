@@ -20,6 +20,8 @@
 .product-select{display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:13px;border-top:1px solid #f0f2f4;color:#6e5cca;font-size:11px;font-weight:800;cursor:pointer}
 .product-select input{accent-color:#7563d9;width:16px;height:16px;margin:0;cursor:pointer}
 .product-select.disabled{color:#adb3bd;cursor:not-allowed}
+.activities-table{min-width:900px}.days-until{font-size:11px;font-weight:800;color:#626b7b;white-space:nowrap}.days-until.today{color:#bd8442}.days-until.overdue{color:#c15f58}.days-until.done{color:#a3aab6}
+.card-bottom strong{flex:none}.card-deadlines{display:flex;flex-direction:column;align-items:flex-end;gap:3px;min-width:0}.card-deadlines span{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .product-select.disabled input{cursor:not-allowed}
 .proposal-wizard{width:min(760px,100%);max-height:94vh}
 .wizard-steps{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;padding:17px 28px;border-bottom:1px solid #edf0f3}

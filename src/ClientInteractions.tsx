@@ -54,7 +54,7 @@ function nowLocal() {
   return new Date(date.getTime() - offset).toISOString().slice(0, 16)
 }
 
-export default function ClientInteractions({ clientId, opportunities, hasFunnelRecord, disabledReason, onChange, children }: { clientId: number; opportunities: Opportunity[]; hasFunnelRecord: boolean; disabledReason?: string; onChange?: () => void; children: ReactNode }) {
+export default function ClientInteractions({ clientId, opportunityId, opportunities, hasFunnelRecord, disabledReason, onChange, children }: { clientId: number; opportunityId?: number; opportunities: Opportunity[]; hasFunnelRecord: boolean; disabledReason?: string; onChange?: () => void; children: ReactNode }) {
   const [items, setItems] = useState<Interaction[]>([])
   const [type, setType] = useState<Interaction['type']>('ligacao')
   const [description, setDescription] = useState('')
@@ -108,7 +108,7 @@ export default function ClientInteractions({ clientId, opportunities, hasFunnelR
     try {
       const response = await fetch(`/api/clients/${clientId}/interactions`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ type, description: description.trim(), occurredAt, scheduledAt }),
+        body: JSON.stringify({ type, description: description.trim(), occurredAt, scheduledAt, opportunityId }),
       })
       if (!response.ok) {
         const text = await response.text()

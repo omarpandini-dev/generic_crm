@@ -30,17 +30,42 @@ const productId = product.data.id
 const opportunity = await request('opportunities', 'POST', { title: 'Projeto de teste', clientId, valueCents: 25100, stage: 'novo' })
 assert.equal(opportunity.status, 201)
 const opportunityId = opportunity.data.id
+const interaction = await request(`clients/${clientId}/interactions`, 'POST', {
+  type: 'ligacao', description: 'Contato programado', occurredAt: '2026-10-22T16:00',
+  scheduledAt: '2026-10-26T08:00', opportunityId,
+})
+assert.equal(interaction.status, 201)
+const scheduledInteraction = (await request('client-interactions')).data.find(item => item.id === interaction.data.id)
+assert.equal(scheduledInteraction.opportunityId, opportunityId)
+assert.equal(scheduledInteraction.scheduledAt, '2026-10-26T08:00')
 const proposal = await request('proposals', 'POST', {
   title: 'Proposta de teste', clientId, opportunityId, status: 'rascunho', discountPercent: 10,
+  validUntil: '2099-01-01', deliveryDate: '2026-11-30',
   items: [{ productId, description: 'Serviço de teste', quantity: 2, unitPriceCents: 12550 }],
 })
 assert.equal(proposal.status, 201)
 const proposalId = proposal.data.id
 const first = (await request('proposals')).data.find(item => item.id === proposalId)
+const validity = new Date()
+validity.setDate(validity.getDate() + 10)
+assert.equal(first.validUntil, `${validity.getFullYear()}-${String(validity.getMonth() + 1).padStart(2, '0')}-${String(validity.getDate()).padStart(2, '0')}`)
+assert.equal(first.deliveryDate, '2026-11-30')
+assert.equal((await request('proposals', 'POST', {
+  title: 'Sem entrega', clientId, items: [{ productId, description: 'Serviço', quantity: 1, unitPriceCents: 100 }],
+})).status, 400)
+assert.equal((await request(`proposals/${proposalId}`, 'PUT', {
+  title: first.title, clientId, opportunityId, status: first.status, validUntil: '2099-01-01',
+  deliveryDate: '2026-12-02', discountPercent: 10,
+  items: [{ productId, description: 'Serviço de teste', quantity: 2, unitPriceCents: 12550 }],
+})).status, 200)
+const updatedDates = (await request('proposals')).data.find(item => item.id === proposalId)
+assert.equal(updatedDates.validUntil, first.validUntil)
+assert.equal(updatedDates.deliveryDate, '2026-12-02')
 assert.equal(first.subtotalCents, 25100)
 assert.equal(first.totalCents, 22590)
 assert.equal(first.items[0].unitPriceCents, 12550)
 const linkedOpportunity = (await request('opportunities')).data.find(item => item.id === opportunityId)
+assert.equal('expectedClose' in linkedOpportunity, false)
 assert.equal(linkedOpportunity.stage, 'proposta')
 assert.equal(linkedOpportunity.valueCents, 22590)
 const pdfResponse = await fetch(`${base}/api/proposals/${proposalId}/pdf`)
@@ -53,6 +78,7 @@ assert.ok(pdfBytes.length > 10_000)
 
 const longProposal = await request('proposals', 'POST', {
   title: 'Proposta longa de teste', clientId, status: 'rascunho', discountPercent: 0,
+  deliveryDate: '2026-12-01',
   notes: 'Observações de teste com acentuação. '.repeat(40),
   items: Array.from({ length: 30 }, (_, index) => ({ productId: null, description: `Serviço detalhado número ${index + 1} com instalação, configuração e acompanhamento técnico.`, quantity: 1, unitPriceCents: 1000 })),
 })
@@ -72,7 +98,7 @@ const secondProduct = await request('products', 'POST', { name: 'Treinamento de 
 assert.equal(secondProduct.status, 201)
 const catalogProposal = await request('proposals', 'POST', {
   title: 'Proposta com vários produtos', clientId, opportunityId: null, status: 'enviada',
-  validUntil: '2026-11-15', discountPercent: 5,
+  validUntil: '2026-11-15', deliveryDate: '2026-11-30', discountPercent: 5,
   notes: 'Prazo de entrega: 30/11/2026\nCondições de pagamento: 50% na aprovação',
   items: [
     { productId, description: 'Serviço de teste', quantity: 2, unitPriceCents: 12550 },

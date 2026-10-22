@@ -10,18 +10,17 @@ type Appointment = {
   scheduledAt: string
   completed: number
 }
-type Opportunity = {
+type Proposal = {
   id: number
   clientId: number
   clientName: string
   title: string
-  stage: 'novo' | 'contato' | 'proposta' | 'negociacao' | 'ganho' | 'perdido'
-  expectedClose: string
-  notes: string
+  deliveryDate: string
+  status: 'rascunho' | 'enviada' | 'aceita' | 'recusada'
 }
 type CalendarEvent = {
   key: string
-  kind: 'interaction' | 'opportunity'
+  kind: 'interaction' | 'proposal'
   id: number
   clientId: number
   clientName: string
@@ -40,11 +39,11 @@ const localDate = (date: Date) => `${date.getFullYear()}-${String(date.getMonth(
 const parseDate = (iso: string) => new Date(`${iso.slice(0, 10)}T12:00:00`)
 const mondayOf = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate() - (date.getDay() + 6) % 7)
 
-export default function Agenda({ appointments, opportunities, onOpenClient, onOpenOpportunity, onGoClients }: {
+export default function Agenda({ appointments, proposals, onOpenClient, onOpenProposal, onGoClients }: {
   appointments: Appointment[]
-  opportunities: Opportunity[]
+  proposals: Proposal[]
   onOpenClient: (clientId: number) => void
-  onOpenOpportunity: (opportunityId: number) => void
+  onOpenProposal: (proposalId: number) => void
   onGoClients: () => void
 }) {
   const [mode, setMode] = useState<'month' | 'week'>('month')
@@ -58,15 +57,15 @@ export default function Agenda({ appointments, opportunities, onOpenClient, onOp
       title: typeLabels[item.type], description: item.description,
       scheduledAt: item.scheduledAt, status: item.completed ? 'Concluído' : 'Agendado', completed: !!item.completed,
     })),
-    ...opportunities.filter(item => item.expectedClose).map(item => ({
-      key: `opportunity-${item.id}`, kind: 'opportunity' as const, id: item.id,
+    ...proposals.filter(item => item.deliveryDate).map(item => ({
+      key: `proposal-${item.id}`, kind: 'proposal' as const, id: item.id,
       clientId: item.clientId, clientName: item.clientName,
-      title: 'Previsão de fechamento', description: item.title,
-      scheduledAt: `${item.expectedClose}T00:00`,
-      status: item.stage === 'ganho' ? 'Ganho' : item.stage === 'perdido' ? 'Perdido' : 'Previsto',
-      completed: item.stage === 'ganho' || item.stage === 'perdido',
+      title: 'Previsão de entrega', description: item.title,
+      scheduledAt: `${item.deliveryDate}T00:00`,
+      status: item.status === 'recusada' ? 'Recusada' : 'Prevista',
+      completed: item.status === 'recusada',
     })),
-  ], [appointments, opportunities])
+  ], [appointments, proposals])
   const byDay = useMemo(() => {
     const map = new Map<string, CalendarEvent[]>()
     for (const appointment of events) {
@@ -94,7 +93,7 @@ export default function Agenda({ appointments, opportunities, onOpenClient, onOp
   }
   function openEvent(event: CalendarEvent) {
     if (event.kind === 'interaction') onOpenClient(event.clientId)
-    else onOpenOpportunity(event.id)
+    else onOpenProposal(event.id)
   }
 
   return <div className="agenda-layout">
@@ -110,13 +109,13 @@ export default function Agenda({ appointments, opportunities, onOpenClient, onOp
         const outside = mode === 'month' && day.getMonth() !== selected.getMonth()
         return <div className={`agenda-day ${outside ? 'outside' : ''} ${iso === selectedDate ? 'selected' : ''} ${iso === today ? 'today' : ''}`} key={iso}>
           <button type="button" className="agenda-day-number" aria-label={new Intl.DateTimeFormat('pt-BR', { dateStyle: 'full' }).format(day)} aria-pressed={iso === selectedDate} onClick={() => setSelectedDate(iso)}>{day.getDate()}</button>
-          <div className="agenda-day-events">{events.slice(0, mode === 'week' ? 6 : 3).map(event => <button type="button" className={`agenda-event ${event.kind === 'opportunity' ? 'opportunity' : ''} ${event.completed ? 'completed' : ''}`} key={event.key} onClick={() => { setSelectedDate(iso); openEvent(event) }} title={`${event.kind === 'opportunity' ? 'Previsão de fechamento' : event.scheduledAt.slice(11, 16)} · ${event.clientName} · ${event.description}`}><time>{event.kind === 'opportunity' ? 'Funil' : event.scheduledAt.slice(11, 16)}</time><span>{event.clientName}</span></button>)}{events.length > (mode === 'week' ? 6 : 3) && <button type="button" className="agenda-more" onClick={() => setSelectedDate(iso)}>+{events.length - (mode === 'week' ? 6 : 3)} mais</button>}</div>
+          <div className="agenda-day-events">{events.slice(0, mode === 'week' ? 6 : 3).map(event => <button type="button" className={`agenda-event ${event.kind === 'proposal' ? 'opportunity' : ''} ${event.completed ? 'completed' : ''}`} key={event.key} onClick={() => { setSelectedDate(iso); openEvent(event) }} title={`${event.kind === 'proposal' ? 'Previsão de entrega' : event.scheduledAt.slice(11, 16)} · ${event.clientName} · ${event.description}`}><time>{event.kind === 'proposal' ? 'Entrega' : event.scheduledAt.slice(11, 16)}</time><span>{event.clientName}</span></button>)}{events.length > (mode === 'week' ? 6 : 3) && <button type="button" className="agenda-more" onClick={() => setSelectedDate(iso)}>+{events.length - (mode === 'week' ? 6 : 3)} mais</button>}</div>
         </div>
       })}
     </div></div>
     <section className="agenda-day-panel" aria-label="Compromissos do dia selecionado"><div className="agenda-day-panel-heading"><div><span>AGENDA DO DIA</span><h2>{new Intl.DateTimeFormat('pt-BR', { dateStyle: 'full' }).format(selected)}</h2></div><strong>{selectedEvents.length}</strong></div>
-      {selectedEvents.length ? <div className="agenda-day-list">{selectedEvents.map(event => <button type="button" className="agenda-detail" key={event.key} onClick={() => openEvent(event)}><time>{event.kind === 'opportunity' ? 'Dia inteiro' : event.scheduledAt.slice(11, 16)}</time><span className="agenda-detail-main"><strong>{event.title} · {event.clientName}</strong><small>{event.description}</small></span><span className={`agenda-status ${event.kind === 'opportunity' ? 'opportunity' : ''} ${event.completed ? 'completed' : ''} ${event.status === 'Perdido' ? 'lost' : ''}`}>{event.status}</span><ArrowRight size={16} /></button>)}</div> : <div className="agenda-day-empty"><CalendarDays size={23} /><span>Nenhum compromisso neste dia.</span></div>}
+      {selectedEvents.length ? <div className="agenda-day-list">{selectedEvents.map(event => <button type="button" className="agenda-detail" key={event.key} onClick={() => openEvent(event)}><time>{event.kind === 'proposal' ? 'Dia inteiro' : event.scheduledAt.slice(11, 16)}</time><span className="agenda-detail-main"><strong>{event.title} · {event.clientName}</strong><small>{event.description}</small></span><span className={`agenda-status ${event.kind === 'proposal' ? 'opportunity' : ''} ${event.completed ? 'completed' : ''} ${event.status === 'Recusada' ? 'lost' : ''}`}>{event.status}</span><ArrowRight size={16} /></button>)}</div> : <div className="agenda-day-empty"><CalendarDays size={23} /><span>Nenhum compromisso neste dia.</span></div>}
     </section>
-    {!events.length && <div className="agenda-empty-note">Os compromissos aparecem ao programar uma interação ou informar a previsão de fechamento no funil. <button type="button" onClick={onGoClients}>Ver clientes <ArrowRight size={14} /></button></div>}
+    {!events.length && <div className="agenda-empty-note">Os compromissos aparecem ao programar uma interação ou informar a previsão de entrega de uma proposta. <button type="button" onClick={onGoClients}>Ver clientes <ArrowRight size={14} /></button></div>}
   </div>
 }

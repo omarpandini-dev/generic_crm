@@ -27,7 +27,7 @@ db.exec(`
     id INTEGER PRIMARY KEY, title TEXT NOT NULL, client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE RESTRICT,
     value_cents INTEGER NOT NULL DEFAULT 0 CHECK(value_cents >= 0),
     stage TEXT NOT NULL DEFAULT 'novo' CHECK(stage IN ('novo','contato','proposta','negociacao','ganho','perdido')),
-    expected_close TEXT NOT NULL DEFAULT '', notes TEXT NOT NULL DEFAULT '',
+    notes TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
   CREATE TABLE IF NOT EXISTS proposals (
@@ -55,6 +55,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS client_interactions (
     id INTEGER PRIMARY KEY,
     client_id INTEGER NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    opportunity_id INTEGER REFERENCES opportunities(id) ON DELETE SET NULL,
     type TEXT NOT NULL CHECK(type IN ('ligacao','email','reuniao','mensagem','outro')),
     description TEXT NOT NULL,
     occurred_at TEXT NOT NULL,
@@ -76,6 +77,20 @@ const interactionColumns = new Set(db.prepare('PRAGMA table_info(client_interact
 if (!interactionColumns.has('scheduled_at')) db.exec("ALTER TABLE client_interactions ADD COLUMN scheduled_at TEXT NOT NULL DEFAULT ''")
 if (!interactionColumns.has('completed')) db.exec('ALTER TABLE client_interactions ADD COLUMN completed INTEGER NOT NULL DEFAULT 0 CHECK(completed IN (0,1))')
 if (!interactionColumns.has('funnel_stage')) db.exec("ALTER TABLE client_interactions ADD COLUMN funnel_stage TEXT NOT NULL DEFAULT '' CHECK(funnel_stage = '' OR funnel_stage IN ('novo','contato','proposta','negociacao','ganho','perdido'))")
+if (!interactionColumns.has('opportunity_id')) {
+  db.exec('ALTER TABLE client_interactions ADD COLUMN opportunity_id INTEGER REFERENCES opportunities(id) ON DELETE SET NULL')
+}
+if (!db.prepare("SELECT key FROM schema_migrations WHERE key = 'client_interaction_opportunity_link_v1'").get()) {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`UPDATE client_interactions SET opportunity_id = (
+      SELECT id FROM opportunities WHERE client_id = client_interactions.client_id
+        AND stage NOT IN ('ganho','perdido')
+    ) WHERE opportunity_id IS NULL AND (SELECT COUNT(*) FROM opportunities
+        WHERE client_id = client_interactions.client_id AND stage NOT IN ('ganho','perdido')) = 1`)
+    db.exec("INSERT INTO schema_migrations (key) VALUES ('client_interaction_opportunity_link_v1'); COMMIT")
+  } catch (error) { db.exec('ROLLBACK'); throw error }
+}
 const proposalColumns = new Set(db.prepare('PRAGMA table_info(proposals)').all().map(column => column.name))
 if (!proposalColumns.has('delivery_date')) db.exec("ALTER TABLE proposals ADD COLUMN delivery_date TEXT NOT NULL DEFAULT ''")
 
@@ -116,6 +131,18 @@ for (const proposal of query("SELECT id, notes FROM proposals WHERE delivery_dat
   if (parsed.getUTCFullYear() !== Number(year) || parsed.getUTCMonth() + 1 !== Number(month) || parsed.getUTCDate() !== Number(day)) continue
   run('UPDATE proposals SET delivery_date=? WHERE id=?', `${year}-${month}-${day}`, proposal.id)
 }
+const opportunityColumns = new Set(db.prepare('PRAGMA table_info(opportunities)').all().map(column => column.name))
+if (opportunityColumns.has('expected_close')) {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    db.exec(`UPDATE proposals SET delivery_date = (
+      SELECT expected_close FROM opportunities WHERE opportunities.id = proposals.opportunity_id
+    ) WHERE delivery_date = '' AND opportunity_id IS NOT NULL
+      AND EXISTS (SELECT 1 FROM opportunities WHERE opportunities.id = proposals.opportunity_id AND expected_close <> '')`)
+    db.exec('ALTER TABLE opportunities DROP COLUMN expected_close')
+    db.exec('COMMIT')
+  } catch (error) { db.exec('ROLLBACK'); throw error }
+}
 const optionalId = (value) => value === null || value === undefined || value === '' ? null : id(value)
 const exists = (table, value) => {
   if (!one(`SELECT id FROM ${table} WHERE id = ?`, value)) throw new ApiError(400, `Registro relacionado não encontrado: ${table}.`)
@@ -144,13 +171,13 @@ function clients() {
 }
 function clientInteractions(clientId) {
   exists('clients', clientId)
-  return query(`SELECT i.id, i.client_id AS clientId, i.type, i.description,
+  return query(`SELECT i.id, i.client_id AS clientId, i.opportunity_id AS opportunityId, i.type, i.description,
     i.occurred_at AS occurredAt, i.scheduled_at AS scheduledAt, i.completed,
     i.funnel_stage AS funnelStage, i.created_at AS createdAt FROM client_interactions i
     WHERE i.client_id = ? ORDER BY i.occurred_at DESC, i.id DESC`, clientId)
 }
 function allClientInteractions() {
-  return query(`SELECT i.id, i.client_id AS clientId, c.name AS clientName, i.type,
+  return query(`SELECT i.id, i.client_id AS clientId, i.opportunity_id AS opportunityId, c.name AS clientName, i.type,
     i.description, i.occurred_at AS occurredAt, i.scheduled_at AS scheduledAt,
     i.completed, i.funnel_stage AS funnelStage, i.created_at AS createdAt
     FROM client_interactions i JOIN clients c ON c.id = i.client_id
@@ -174,20 +201,25 @@ function saveClientInteraction(clientId, payload) {
   const description = required(payload.description, 'Descrição')
   const occurredAt = dateTime(payload.occurredAt, 'Data e hora da interação')
   const scheduledAt = dateTime(payload.scheduledAt, 'Data programada', true)
+  const requestedOpportunityId = optionalId(payload.opportunityId)
   db.exec('BEGIN IMMEDIATE')
   try {
     let opportunity = null
-    const active = query("SELECT id, stage FROM opportunities WHERE client_id = ? AND stage NOT IN ('ganho','perdido')", clientId)
-    if (active.length === 1) opportunity = active[0]
-    else if (active.length === 0 && contactInteractionTypes.has(type) &&
+    if (requestedOpportunityId) {
+      opportunity = one('SELECT id, stage FROM opportunities WHERE id = ? AND client_id = ?', requestedOpportunityId, clientId)
+      if (!opportunity) throw new ApiError(400, 'Oportunidade não pertence ao cliente.')
+    }
+    const active = opportunity ? [] : query("SELECT id, stage FROM opportunities WHERE client_id = ? AND stage NOT IN ('ganho','perdido')", clientId)
+    if (!opportunity && active.length === 1) opportunity = active[0]
+    else if (!opportunity && active.length === 0 && contactInteractionTypes.has(type) &&
       !one('SELECT id FROM opportunities WHERE client_id = ? LIMIT 1', clientId)) {
       const title = str(`Contato com ${client.name}`, 200)
       const opportunityId = Number(run('INSERT INTO opportunities (title, client_id, value_cents, stage) VALUES (?,?,0,?)', title, clientId, 'contato').lastInsertRowid)
       opportunity = { id: opportunityId, stage: 'contato' }
     }
     const interactionId = Number(run(`INSERT INTO client_interactions
-      (client_id, type, description, occurred_at, scheduled_at, funnel_stage)
-      VALUES (?,?,?,?,?,?)`, clientId, type, description, occurredAt, scheduledAt,
+      (client_id, opportunity_id, type, description, occurred_at, scheduled_at, funnel_stage)
+      VALUES (?,?,?,?,?,?,?)`, clientId, opportunity?.id ?? null, type, description, occurredAt, scheduledAt,
       opportunity?.stage ?? '').lastInsertRowid)
     db.exec('COMMIT')
     return interactionId
@@ -204,7 +236,7 @@ function activities() {
 }
 function opportunities() {
   return query(`SELECT o.id, o.title, o.client_id AS clientId, c.name AS clientName,
-    o.value_cents AS valueCents, o.stage, o.expected_close AS expectedClose, o.notes,
+    o.value_cents AS valueCents, o.stage, o.notes,
     o.created_at AS createdAt FROM opportunities o JOIN clients c ON c.id = o.client_id
     ORDER BY o.updated_at DESC, o.id DESC`)
 }
@@ -268,13 +300,13 @@ function saveOpportunity(payload, currentId) {
   exists('clients', clientId)
   const stage = str(payload.stage || 'novo', 30)
   if (!stages.has(stage)) throw new ApiError(400, 'Etapa inválida.')
-  const values = [required(payload.title, 'Título'), clientId, cents(payload.valueCents), stage, date(payload.expectedClose), str(payload.notes, 2000)]
+  const values = [required(payload.title, 'Título'), clientId, cents(payload.valueCents), stage, str(payload.notes, 2000)]
   if (currentId) {
     if (!one('SELECT id FROM opportunities WHERE id = ?', currentId)) throw new ApiError(404, 'Oportunidade não encontrada.')
-    run(`UPDATE opportunities SET title=?, client_id=?, value_cents=?, stage=?, expected_close=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, ...values, currentId)
+    run(`UPDATE opportunities SET title=?, client_id=?, value_cents=?, stage=?, notes=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, ...values, currentId)
     return currentId
   }
-  return Number(run('INSERT INTO opportunities (title, client_id, value_cents, stage, expected_close, notes) VALUES (?,?,?,?,?,?)', ...values).lastInsertRowid)
+  return Number(run('INSERT INTO opportunities (title, client_id, value_cents, stage, notes) VALUES (?,?,?,?,?)', ...values).lastInsertRowid)
 }
 
 function saveProposal(payload, currentId) {
@@ -301,18 +333,20 @@ function saveProposal(payload, currentId) {
   if (!Number.isSafeInteger(subtotalCents)) throw new ApiError(400, 'Total muito alto.')
   const totalCents = Math.round(subtotalCents * (1 - discountPercent / 100))
   const title = required(payload.title, 'Título')
-  const validUntil = date(payload.validUntil)
-  const existingProposal = currentId ? one('SELECT delivery_date AS deliveryDate FROM proposals WHERE id = ?', currentId) : null
+  const existingProposal = currentId ? one('SELECT delivery_date AS deliveryDate, valid_until AS validUntil FROM proposals WHERE id = ?', currentId) : null
   if (currentId && !existingProposal) throw new ApiError(404, 'Proposta não encontrada.')
+  const validityDate = new Date()
+  validityDate.setDate(validityDate.getDate() + 10)
+  const validUntil = existingProposal?.validUntil || `${validityDate.getFullYear()}-${String(validityDate.getMonth() + 1).padStart(2, '0')}-${String(validityDate.getDate()).padStart(2, '0')}`
   const deliveryDate = date(payload.deliveryDate === undefined ? existingProposal?.deliveryDate : payload.deliveryDate)
-  const expectedClose = payload.expectedClose === undefined ? undefined : date(payload.expectedClose)
+  if (!deliveryDate) throw new ApiError(400, 'Informe a previsão de entrega.')
   const notes = (payload.deliveryDate === undefined ? str(payload.notes, 2000) : str(payload.notes, 2000).replace(legacyDeliveryPattern, '').trim())
   db.exec('BEGIN IMMEDIATE')
   try {
     if (!opportunityId) {
       opportunityId = Number(run(`INSERT INTO opportunities
-        (title, client_id, value_cents, stage, expected_close)
-        VALUES (?,?,?,?,?)`, title, clientId, totalCents, 'proposta', expectedClose ?? validUntil).lastInsertRowid)
+        (title, client_id, value_cents, stage)
+        VALUES (?,?,?,?)`, title, clientId, totalCents, 'proposta').lastInsertRowid)
     }
     const values = [title, clientId, opportunityId, status, validUntil, deliveryDate, notes, discountPercent, subtotalCents, totalCents]
     let proposalId = currentId
@@ -323,12 +357,10 @@ function saveProposal(payload, currentId) {
       proposalId = Number(run(`INSERT INTO proposals (title, client_id, opportunity_id, status, valid_until, delivery_date, notes, discount_percent, subtotal_cents, total_cents) VALUES (?,?,?,?,?,?,?,?,?,?)`, ...values).lastInsertRowid)
     }
     for (const item of items) run('INSERT INTO proposal_items (proposal_id, product_id, description, quantity, unit_price_cents) VALUES (?,?,?,?,?)', proposalId, item.productId, item.description, item.quantity, item.unitPriceCents)
-    const opportunity = one('SELECT stage, expected_close AS expectedClose FROM opportunities WHERE id = ?', opportunityId)
+    const opportunity = one('SELECT stage FROM opportunities WHERE id = ?', opportunityId)
     if (payload.moveToProposalStage === true || !['ganho', 'perdido'].includes(opportunity.stage)) {
       const stage = payload.moveToProposalStage === true || ['novo', 'contato'].includes(opportunity.stage) ? 'proposta' : opportunity.stage
-      run(`UPDATE opportunities SET stage=?, value_cents=?, expected_close=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, stage, totalCents, expectedClose ?? opportunity.expectedClose, opportunityId)
-    } else if (expectedClose !== undefined) {
-      run('UPDATE opportunities SET expected_close=?, updated_at=CURRENT_TIMESTAMP WHERE id=?', expectedClose, opportunityId)
+      run(`UPDATE opportunities SET stage=?, value_cents=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`, stage, totalCents, opportunityId)
     }
     db.exec('COMMIT')
     return proposalId
@@ -340,12 +372,12 @@ function reconcileExistingProposals() {
   if (one('SELECT key FROM schema_migrations WHERE key = ?', migrationKey)) return
   db.exec('BEGIN IMMEDIATE')
   try {
-    const unlinked = query(`SELECT id, title, client_id AS clientId, total_cents AS totalCents,
-      valid_until AS validUntil FROM proposals WHERE opportunity_id IS NULL ORDER BY id`)
+    const unlinked = query(`SELECT id, title, client_id AS clientId, total_cents AS totalCents
+      FROM proposals WHERE opportunity_id IS NULL ORDER BY id`)
     for (const proposal of unlinked) {
       const opportunityId = Number(run(`INSERT INTO opportunities
-        (title, client_id, value_cents, stage, expected_close) VALUES (?,?,?,?,?)`,
-        proposal.title, proposal.clientId, proposal.totalCents, 'proposta', proposal.validUntil).lastInsertRowid)
+        (title, client_id, value_cents, stage) VALUES (?,?,?,?)`,
+        proposal.title, proposal.clientId, proposal.totalCents, 'proposta').lastInsertRowid)
       run('UPDATE proposals SET opportunity_id=? WHERE id=?', opportunityId, proposal.id)
     }
     const linked = query(`SELECT opportunity_id AS opportunityId, total_cents AS totalCents

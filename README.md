@@ -15,7 +15,7 @@ Abra o endereço informado pelo Vite (normalmente `http://127.0.0.1:5173`). O co
 
 Para adicionar 10 produtos fictícios ao catálogo, execute `npm.cmd run seed:products`. A carga pode ser repetida sem duplicar os produtos de demonstração.
 
-Em **Produtos**, marque vários produtos ativos e clique em **Criar proposta**. O assistente permite ajustar itens, quantidades e preços, escolher cliente e oportunidade, definir validade, entrega, pagamento e desconto, revisar o total e salvar ou salvar com download do PDF. Se nenhuma oportunidade for escolhida, uma nova é criada no funil.
+Em **Produtos**, marque vários produtos ativos e clique em **Criar proposta**. O assistente permite ajustar itens, quantidades e preços, escolher cliente e oportunidade, definir a previsão de entrega, pagamento e desconto, revisar o total e salvar ou salvar com download do PDF. A validade é calculada automaticamente para 10 dias após a criação. Se nenhuma oportunidade for escolhida, uma nova é criada no funil.
 
 Para adicionar 50 clientes fictícios, execute `npm.cmd run seed:clients`. A carga usa e-mails `@exemplo.test` e também pode ser repetida sem duplicar os clientes de demonstração.
 
@@ -24,7 +24,7 @@ Veja um [PDF de exemplo](examples/proposta-exemplo.pdf) com dados fictícios.
 
 Ao salvar uma proposta, a oportunidade vinculada avança para **Proposta** e assume o valor total da proposta. Se nenhuma oportunidade for escolhida, o CRM cria uma no funil. O cartão do funil mostra o título da proposta vinculada. Oportunidades já marcadas como **Ganho** ou **Perdido** não mudam de etapa automaticamente.
 
-Em **Atividades**, crie tarefas com data de vencimento e, se quiser, vincule um cliente. A previsão de fechamento de oportunidades abertas também aparece automaticamente entre os prazos pendentes; ao clicar nela, o CRM abre a oportunidade no funil. Os filtros mostram pendentes, próximos 7 dias, atrasados e tarefas concluídas. A **Visão geral** destaca tarefas e fechamentos atrasados ou próximos do vencimento.
+Em **Atividades**, crie tarefas com data de vencimento e, se quiser, vincule um cliente. A previsão de entrega das propostas aparece entre os prazos pendentes; ao clicar nela, o CRM abre a proposta. Essa data também alimenta o resumo do mês no funil e a agenda. Os filtros mostram pendentes, próximos 7 dias, atrasados e tarefas concluídas. A **Visão geral** destaca tarefas e entregas atrasadas ou próximas do vencimento.
 
 ## Versão compilada
 
