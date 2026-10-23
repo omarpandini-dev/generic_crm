@@ -38,6 +38,7 @@ Abra `http://127.0.0.1:3001`. O servidor escuta apenas na máquina local.
 ## Dados
 
 - O arquivo `data/crm.sqlite` é criado automaticamente. Com o servidor parado, basta copiá-lo para fazer um backup ou mover os dados para outra instalação.
+- Para zerar todos os registros do CRM (clientes, produtos, oportunidades, propostas, atividades e interações), pare o servidor, faça uma cópia de segurança do arquivo SQLite e execute `npm.cmd run db:reset -- --yes` no Windows ou `npm run db:reset -- --yes` no Linux/macOS. A opção `--yes` confirma a exclusão permanente dos dados. O comando mantém as tabelas e o histórico de migrações. Se usar outro arquivo, defina `CRM_DB_PATH` antes de executá-lo.
 - Clientes com oportunidades ou propostas vinculadas não podem ser excluídos. Produtos excluídos permanecem como descrição e preço nos itens históricos das propostas.
 - O sistema é local e não possui autenticação, multiusuário ou sincronização nesta versão.
 

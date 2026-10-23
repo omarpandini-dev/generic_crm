@@ -11,7 +11,8 @@
     "start": "node server/index.mjs",
     "preview": "vite preview",
     "seed:products": "node scripts/seed-products.mjs",
-    "seed:clients": "node scripts/seed-clients.mjs"
+    "seed:clients": "node scripts/seed-clients.mjs",
+    "db:reset": "node scripts/reset-db.mjs"
   },
   "dependencies": {
     "@expo-google-fonts/manrope": "^0.4.2",
