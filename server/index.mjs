@@ -336,6 +336,14 @@ async function api(req, res, pathname) {
   const currentId = rawId ? id(rawId) : null
   if (method === 'DELETE' && currentId) {
     const table = resource
+    if (resource === 'clients') {
+      if (await one('SELECT 1 FROM proposals WHERE client_id = ? LIMIT 1', currentId)) {
+        throw new ApiError(409, 'Não é possível excluir este cliente porque ele possui propostas vinculadas. Exclua as propostas e as oportunidades vinculadas antes de tentar novamente.')
+      }
+      if (await one('SELECT 1 FROM opportunities WHERE client_id = ? LIMIT 1', currentId)) {
+        throw new ApiError(409, 'Não é possível excluir este cliente porque ele possui oportunidades vinculadas. Exclua as oportunidades antes de tentar novamente.')
+      }
+    }
     const result = await run(`DELETE FROM ${table} WHERE id = ?`, currentId)
     if (!result.changes) throw new ApiError(404, 'Registro nÃ£o encontrado.')
     return json(res, 200, { ok: true })
@@ -368,8 +376,13 @@ const server = createServer(async (req, res) => {
     else throw new ApiError(405, 'MÃ©todo nÃ£o permitido.')
   } catch (error) {
     const constraint = error?.code === '23503'
+    const constraintMessage = error?.constraint === 'proposals_client_id_fkey'
+      ? 'Não é possível excluir este cliente porque ele possui propostas vinculadas. Exclua as propostas e as oportunidades vinculadas antes de tentar novamente.'
+      : error?.constraint === 'opportunities_client_id_fkey'
+        ? 'Não é possível excluir este cliente porque ele possui oportunidades vinculadas. Exclua as oportunidades antes de tentar novamente.'
+        : 'Este registro está em uso e não pode ser excluído.'
     if (!(error instanceof ApiError) && !constraint) console.error(error)
-    json(res, error.status || (constraint ? 409 : 500), { error: constraint ? 'Este registro estÃ¡ em uso e nÃ£o pode ser excluÃ­do.' : (error.status ? error.message : 'Erro interno do servidor.') })
+    json(res, error.status || (constraint ? 409 : 500), { error: constraint ? constraintMessage : (error.status ? error.message : 'Erro interno do servidor.') })
   }
 })
 
